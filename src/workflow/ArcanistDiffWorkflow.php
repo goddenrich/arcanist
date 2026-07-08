@@ -488,6 +488,13 @@ EOTEXT
         $result_uri = $result['uri'];
         $result_id = $result['revisionid'];
 
+        $base_commit = null;
+        $repository_api = $this->getRepositoryAPI();
+        if ($repository_api) {
+          $base_commit = $repository_api->getSourceControlBaseRevision();
+        }
+        $this->linkParentRevision($result_id, $base_commit);
+
         echo pht('Updated an existing Differential revision:')."\n";
       } else {
         $xactions = $this->revisionTransactions;
@@ -547,6 +554,13 @@ EOTEXT
               'workflow. Upgrade the software version on the server to a '.
               'version released after October 2017.'));
         }
+
+        $base_commit = null;
+        $repository_api = $this->getRepositoryAPI();
+        if ($repository_api) {
+          $base_commit = $repository_api->getSourceControlBaseRevision();
+        }
+        $this->linkParentRevision($result_id, $base_commit);
 
         $revised_message = $conduit->callMethodSynchronous(
           'differential.getcommitmessage',
@@ -3001,6 +3015,77 @@ EOTEXT
     }
 
     return head($revision_refs);
+  }
+
+  private function linkParentRevision($revision_id, $base_commit) {
+    if (!$base_commit) {
+      return;
+    }
+
+    $repository_api = $this->getRepositoryAPI();
+    if (!$repository_api || !$repository_api->supportsLocalCommits()) {
+      return;
+    }
+
+    $parent_revision_id = null;
+    try {
+      $base_msg = $repository_api->getCommitMessage($base_commit);
+      if (!$base_msg) {
+        return;
+      }
+
+      $parsed_message = ArcanistDifferentialCommitMessage::newFromRawCorpus($base_msg);
+      $parent_revision_id = $parsed_message->getRevisionID();
+      if (!$parent_revision_id || $parent_revision_id == $revision_id) {
+        return;
+      }
+
+      $conduit = $this->getConduit();
+      $parent_revisions_info = $conduit->callMethodSynchronous(
+        'differential.revision.search',
+        array(
+          'constraints' => array(
+            'ids' => array((int)$parent_revision_id),
+          ),
+        ));
+
+      $parent_data = idx($parent_revisions_info, 'data', array());
+      $parent_item = head($parent_data);
+      if (!$parent_item) {
+        return;
+      }
+
+      $parent_ref = ArcanistRevisionRef::newFromConduit($parent_item);
+      if ($parent_ref->isClosed()) {
+        return;
+      }
+
+      $parent_phid = $parent_ref->getPHID();
+      if (!$parent_phid) {
+        return;
+      }
+
+      $conduit->callMethodSynchronous(
+        'differential.revision.edit',
+        array(
+          'objectIdentifier' => 'D'.$revision_id,
+          'transactions' => array(
+            array(
+              'type' => 'parents.set',
+              'value' => array($parent_phid),
+            ),
+          ),
+        ));
+    } catch (Exception $ex) {
+      if ($parent_revision_id) {
+        $this->writeWarn(
+          pht('PARENT LINKING FAILED'),
+          pht(
+            'Unable to link parent revision D%s. If required, you can set '.
+            'the parent revision manually in the web interface.',
+            $parent_revision_id));
+      }
+    }
   }
 
 }
