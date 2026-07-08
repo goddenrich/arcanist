@@ -1398,13 +1398,64 @@ EOTEXT
         $revision = head($revisions);
         $is_update = $revision['id'];
       } else {
-        throw new ArcanistUsageException(
-          pht(
-            "There are several revisions which match the working copy:\n\n%s\n".
-            "Use '%s' to choose one, or '%s' to create a new revision.",
-            $this->renderRevisionList($revisions),
-            '--update',
-            '--create'));
+        echo pht("There are several revisions which match the working copy:\n\n");
+        $revisions = array_values($revisions);
+        foreach ($revisions as $idx => $rev) {
+          echo '    ['.($idx + 1).'] D'.$rev['id'].': '.$rev['title']."\n";
+        }
+        echo "\n";
+
+        $selected_idx = phutil_console_select(
+          pht('Which revision do you want to update?'),
+          1,
+          count($revisions));
+
+        $revision = $revisions[$selected_idx - 1];
+        $is_update = $revision['id'];
+
+        if ($repository_api instanceof ArcanistGitAPI) {
+          $local_commits = $repository_api->getLocalCommitInformation();
+          $commits_in_stack = array();
+          foreach (array_reverse($local_commits) as $commit_hash => $commit_info) {
+            $message_object = ArcanistDifferentialCommitMessage::newFromRawCorpus(
+              $commit_info['message']);
+            $rev_id = $message_object->getRevisionID();
+            if ($rev_id) {
+              $commits_in_stack[] = array(
+                'revision_id' => $rev_id,
+                'commit_hash' => $commit_hash,
+                'commit_info' => $commit_info,
+              );
+            }
+          }
+
+          $chosen_rev_idx = null;
+          foreach ($commits_in_stack as $idx => $stack_item) {
+            if ($stack_item['revision_id'] == $is_update) {
+              $chosen_rev_idx = $idx;
+              break;
+            }
+          }
+
+          if ($chosen_rev_idx !== null) {
+            $head_commit = $commits_in_stack[$chosen_rev_idx]['commit_hash'];
+            if ($chosen_rev_idx > 0) {
+              $base_commit = $commits_in_stack[$chosen_rev_idx - 1]['commit_hash'];
+            } else {
+              $base_commit = head($commits_in_stack[0]['commit_info']['parents']);
+            }
+
+            if ($base_commit && $head_commit) {
+              $repository_api->setBaseCommit($base_commit);
+              $repository_api->setHeadCommit($head_commit);
+              echo pht(
+                "Selected revision D%s. Set commit range %s..%s based on the revision stack.\n",
+                $is_update,
+                substr($base_commit, 0, 7),
+                substr($head_commit, 0, 7));
+            }
+          }
+        }
       }
     }
 
