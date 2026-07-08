@@ -1398,6 +1398,39 @@ EOTEXT
         $revision = head($revisions);
         $is_update = $revision['id'];
       } else {
+        if ($repository_api instanceof ArcanistGitAPI) {
+          $local_commits = $repository_api->getLocalCommitInformation();
+          $commits_in_stack = array();
+          $rev_to_index = array();
+          $idx_stack = 0;
+          foreach (array_reverse($local_commits) as $commit_hash => $commit_info) {
+            $message_object = ArcanistDifferentialCommitMessage::newFromRawCorpus(
+              $commit_info['message']);
+            $rev_id = $message_object->getRevisionID();
+            if ($rev_id) {
+              $commits_in_stack[] = array(
+                'revision_id' => $rev_id,
+                'commit_hash' => $commit_hash,
+                'commit_info' => $commit_info,
+              );
+              $rev_to_index[$rev_id] = $idx_stack++;
+            }
+          }
+
+          $revisions_with_stack_idx = array();
+          $revisions_without_stack_idx = array();
+          foreach ($revisions as $rev) {
+            $r_id = $rev['id'];
+            if (isset($rev_to_index[$r_id])) {
+              $revisions_with_stack_idx[$rev_to_index[$r_id]] = $rev;
+            } else {
+              $revisions_without_stack_idx[] = $rev;
+            }
+          }
+          ksort($revisions_with_stack_idx);
+          $revisions = array_merge($revisions_with_stack_idx, $revisions_without_stack_idx);
+        }
+
         echo pht("There are several revisions which match the working copy:\n\n");
         $revisions = array_values($revisions);
         foreach ($revisions as $idx => $rev) {
@@ -1414,21 +1447,6 @@ EOTEXT
         $is_update = $revision['id'];
 
         if ($repository_api instanceof ArcanistGitAPI) {
-          $local_commits = $repository_api->getLocalCommitInformation();
-          $commits_in_stack = array();
-          foreach (array_reverse($local_commits) as $commit_hash => $commit_info) {
-            $message_object = ArcanistDifferentialCommitMessage::newFromRawCorpus(
-              $commit_info['message']);
-            $rev_id = $message_object->getRevisionID();
-            if ($rev_id) {
-              $commits_in_stack[] = array(
-                'revision_id' => $rev_id,
-                'commit_hash' => $commit_hash,
-                'commit_info' => $commit_info,
-              );
-            }
-          }
-
           $chosen_rev_idx = null;
           foreach ($commits_in_stack as $idx => $stack_item) {
             if ($stack_item['revision_id'] == $is_update) {
