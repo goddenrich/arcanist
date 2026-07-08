@@ -488,6 +488,13 @@ EOTEXT
         $result_uri = $result['uri'];
         $result_id = $result['revisionid'];
 
+        $base_commit = null;
+        $repository_api = $this->getRepositoryAPI();
+        if ($repository_api) {
+          $base_commit = $repository_api->getSourceControlBaseRevision();
+        }
+        $this->linkParentRevision($result_id, $base_commit);
+
         echo pht('Updated an existing Differential revision:')."\n";
       } else {
         $xactions = $this->revisionTransactions;
